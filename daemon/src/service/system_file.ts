@@ -6,6 +6,7 @@ import path from "path";
 import { compress, decompress } from "../common/compress";
 import { globalConfiguration } from "../entity/config";
 import { $t, i18next } from "../i18n";
+import dirSizeService from "../service/dir_size_service";
 import { normalizedJoin } from "../tools/filepath";
 
 const ERROR_MSG_01 = $t("TXT_CODE_system_file.illegalAccess");
@@ -136,11 +137,13 @@ export default class FileManager {
         if (info.isFile()) {
           size = info.size;
         } else if (info.isDirectory()) {
-          // compute directory size recursively
-          try {
-            size = await this._getDirectorySizeRecursive(abs);
-          } catch (err) {
-            size = 0; // on error, fallback to 0
+          // Use background cache service to avoid blocking list
+          const cached = dirSizeService.getCached(abs);
+          if (typeof cached === "number") {
+            size = cached;
+          } else {
+            size = 0; // not ready yet
+            dirSizeService.enqueue(abs);
           }
         }
 
