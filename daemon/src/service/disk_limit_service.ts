@@ -1,5 +1,6 @@
 import { exec } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import { promisify } from "util";
 import Instance from "../entity/instance/instance";
 import { $t } from "../i18n";
@@ -73,6 +74,77 @@ class DiskLimitService {
     }
   }
 
+  /**
+   * Get directory size in bytes with cross-platform support
+   * Linux/Mac: uses du command
+   * Windows: uses recursive calculation
+   */
+  async #getDirectorySizeBytes(dirPath: string): Promise<number> {
+    const platform = process.platform;
+
+    try {
+      if (platform === "win32") {
+        // Windows: use recursive calculation for better compatibility
+        return await this.#getDirectorySizeRecursive(dirPath);
+      } else {
+        // Linux/Mac: use du command
+        return await this.#getDirectorySizeUnix(dirPath);
+      }
+    } catch (error) {
+      // Fallback: use recursive calculation if command fails
+      try {
+        return await this.#getDirectorySizeRecursive(dirPath);
+      } catch (fallbackError) {
+        return 0;
+      }
+    }
+  }
+
+  /**
+   * Get directory size using du command (Unix/Linux/Mac)
+   */
+  async #getDirectorySizeUnix(dirPath: string): Promise<number> {
+    const command = `du -s --block-size=1 "${dirPath}"`;
+    const { stdout } = await execPromise(command);
+    const sizeInBytes = Number(String(stdout.split(/\s+/)[0]).trim());
+    return isNaN(sizeInBytes) ? 0 : sizeInBytes;
+  }
+
+  /**
+   * Get directory size by recursively calculating file sizes
+   * Works on all platforms, slower but more reliable
+   */
+  async #getDirectorySizeRecursive(dirPath: string): Promise<number> {
+    let totalSize = 0;
+
+    try {
+      const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+
+      for (const entry of entries) {
+        try {
+          const fullPath = path.join(dirPath, entry.name);
+
+          if (entry.isDirectory()) {
+            // Recursively calculate subdirectory size
+            totalSize += await this.#getDirectorySizeRecursive(fullPath);
+          } else if (entry.isFile()) {
+            // Add file size
+            const stat = await fs.promises.stat(fullPath);
+            totalSize += stat.size;
+          }
+        } catch (entryError) {
+          // Skip files/directories that can't be accessed (permission errors, etc.)
+          continue;
+        }
+      }
+    } catch (dirError) {
+      // Return 0 if directory can't be read
+      return 0;
+    }
+
+    return totalSize;
+  }
+
   public async checkDiskNow(item: IDiskLimitItem, autoStop: boolean = true) {
     const { instance, workspace, maxSpace } = item;
     // There was already an initial check on the working directory when saving,
@@ -82,18 +154,19 @@ class DiskLimitService {
       instance.info.storageLimit = maxSpace;
       return;
     }
-    const command = `du -s --block-size=1M "${workspace}"`;
-    const { stdout } = await execPromise(command);
 
-    const diskUsageSizeMb = Number(String(stdout.split("/")[0]).replaceAll("\t", "").trim());
-
-    if (isNaN(Number(diskUsageSizeMb))) {
+    let diskUsageSizeBytes = 0;
+    try {
+      diskUsageSizeBytes = await this.#getDirectorySizeBytes(workspace);
+    } catch (error) {
+      instance.println("WARNING", `Failed to get disk usage: ${error}`);
       instance.info.storageUsage = 0;
-      instance.info.storageLimit = convertGBToBytes(maxSpace); // GB to bytes
-    } else {
-      instance.info.storageUsage = diskUsageSizeMb * 1024 * 1024; // MB to bytes
-      instance.info.storageLimit = convertGBToBytes(maxSpace); // GB to bytes
+      instance.info.storageLimit = convertGBToBytes(maxSpace);
+      return;
     }
+
+    instance.info.storageUsage = diskUsageSizeBytes;
+    instance.info.storageLimit = convertGBToBytes(maxSpace); // GB to bytes
 
     const storageLimit = instance.info.storageLimit;
     const storageUsage = instance.info.storageUsage;
