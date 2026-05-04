@@ -128,11 +128,25 @@ export default class FileManager {
 
     const statPromises = targetItems.map(async (item) => {
       try {
-        const info = await fs.stat(this.toAbsolutePath(item.name));
+        const abs = this.toAbsolutePath(item.name);
+        const info = await fs.stat(abs);
         const mode = parseInt(String(parseInt(info.mode?.toString(8), 10)).slice(-3));
+
+        let size = 0;
+        if (info.isFile()) {
+          size = info.size;
+        } else if (info.isDirectory()) {
+          // compute directory size recursively
+          try {
+            size = await this._getDirectorySizeRecursive(abs);
+          } catch (err) {
+            size = 0; // on error, fallback to 0
+          }
+        }
+
         return {
           name: item.name,
-          size: info.isFile() ? info.size : 0,
+          size,
           time: info.atime.toString(),
           mode,
           type: item.type
@@ -158,6 +172,31 @@ export default class FileManager {
       total,
       absolutePath: this.toAbsolutePath()
     };
+  }
+
+  // Recursively calculate directory size in bytes. Skips entries that can't be accessed.
+  private async _getDirectorySizeRecursive(dirPath: string): Promise<number> {
+    let total = 0;
+    try {
+      const entries = await fs.readdir(dirPath, { withFileTypes: true });
+      for (const entry of entries) {
+        const full = path.join(dirPath, entry.name);
+        try {
+          if (entry.isDirectory()) {
+            total += await this._getDirectorySizeRecursive(full);
+          } else if (entry.isFile()) {
+            const st = await fs.stat(full);
+            total += st.size;
+          }
+        } catch (err) {
+          // ignore single entry errors
+          continue;
+        }
+      }
+    } catch (err) {
+      return 0;
+    }
+    return total;
   }
 
   async chmod(fileName: string, chmodValue: number, deep: boolean) {
