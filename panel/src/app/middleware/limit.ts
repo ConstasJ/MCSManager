@@ -8,40 +8,43 @@ import { execWithMutexId } from "../utils/sync";
 const SPEED_LIMIT_KEY = "SpeedLimit";
 
 export function speedLimit(seconds: number, errMsg?: string) {
-  return async (ctx: Context, next: Function) => {
-    const requestPath = ctx.URL.pathname;
-    const user = getUserFromCtx(ctx);
+	return async (ctx: Context, next: Function) => {
+		const requestPath = ctx.URL.pathname;
+		const user = getUserFromCtx(ctx);
 
-    if (!user) throw new Error($t("TXT_CODE_permission.forbidden"));
+		if (!user) throw new Error($t("TXT_CODE_permission.forbidden"));
 
-    if (user.permission === ROLE.ADMIN) {
-      return await next();
-    }
+		if (user.permission === ROLE.ADMIN) {
+			return await next();
+		}
 
-    const speedCheckKey = `${SPEED_LIMIT_KEY}:${user.uuid}:${requestPath}`;
-    const isExist = singletonMemoryRedis.get<boolean>(speedCheckKey);
+		const speedCheckKey = `${SPEED_LIMIT_KEY}:${user.uuid}:${requestPath}`;
+		const isExist = singletonMemoryRedis.get<boolean>(speedCheckKey);
 
-    if (isExist) {
-      ctx.status = 500;
-      ctx.body =
-        errMsg ||
-        $t("TXT_CODE_c093bec9", {
-          seconds: singletonMemoryRedis.ttl(speedCheckKey)
-        });
-      return;
-    }
+		if (isExist) {
+			ctx.status = 500;
+			const remainingSeconds = singletonMemoryRedis.ttl(speedCheckKey);
+			// Ensure display shows at least 1 second to avoid misleading "0s" message
+			const displaySeconds = Math.max(1, remainingSeconds);
+			ctx.body =
+				errMsg ||
+				$t("TXT_CODE_c093bec9", {
+					seconds: displaySeconds,
+				});
+			return;
+		}
 
-    singletonMemoryRedis.set(speedCheckKey, true, seconds);
-    return await next();
-  };
+		singletonMemoryRedis.set(speedCheckKey, true, seconds);
+		return await next();
+	};
 }
 
 export function requestConcurrencyLimiter(url: string) {
-  return async (ctx: Context, next: Function) => {
-    const userId = getUserUuid(ctx) || "_anonymous_";
-    const key = `UserConcurrencyLimiter:${userId}:${url}`;
-    return await execWithMutexId(key, async () => {
-      return await next();
-    });
-  };
+	return async (ctx: Context, next: Function) => {
+		const userId = getUserUuid(ctx) || "_anonymous_";
+		const key = `UserConcurrencyLimiter:${userId}:${url}`;
+		return await execWithMutexId(key, async () => {
+			return await next();
+		});
+	};
 }
