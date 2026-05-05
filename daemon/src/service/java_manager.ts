@@ -192,32 +192,36 @@ class JavaManager {
 
 const javaManager = new JavaManager();
 
-InstanceSubsystem.on("open", (obj: { instanceUuid: string }) => {
-  const instanceUuid = obj.instanceUuid;
-  const config = InstanceSubsystem.getInstance(instanceUuid)?.config;
-  if (!config) return;
+// Delay listener registration to avoid circular dependency issues
+// The InstanceSubsystem may not be fully initialized when this module is first loaded
+setImmediate(() => {
+  InstanceSubsystem.on("open", (obj: { instanceUuid: string }) => {
+    const instanceUuid = obj.instanceUuid;
+    const config = InstanceSubsystem.getInstance(instanceUuid)?.config;
+    if (!config) return;
 
-  const javaId = config.java.id;
-  if (!javaId) return;
+    const javaId = config.java.id;
+    if (!javaId) return;
 
-  const java = javaManager.getJava(javaId);
-  if (java && !java.usingInstances.includes(instanceUuid)) java.usingInstances.push(instanceUuid);
+    const java = javaManager.getJava(javaId);
+    if (java && !java.usingInstances.includes(instanceUuid)) java.usingInstances.push(instanceUuid);
+  });
+
+  const handleStopInstance = (obj: { instanceUuid: string }) => {
+    const instanceUuid = obj.instanceUuid;
+    const config = InstanceSubsystem.getInstance(instanceUuid)?.config;
+    if (!config) return;
+
+    const javaId = config.java.id;
+    if (!javaId) return;
+
+    const java = javaManager.getJava(javaId);
+    if (java && !java.usingInstances.includes(instanceUuid))
+      java.usingInstances.filter((uuid) => uuid !== instanceUuid);
+  };
+
+  InstanceSubsystem.on("exit", handleStopInstance);
+  InstanceSubsystem.on("failure", handleStopInstance);
 });
-
-const handleStopInstance = (obj: { instanceUuid: string }) => {
-  const instanceUuid = obj.instanceUuid;
-  const config = InstanceSubsystem.getInstance(instanceUuid)?.config;
-  if (!config) return;
-
-  const javaId = config.java.id;
-  if (!javaId) return;
-
-  const java = javaManager.getJava(javaId);
-  if (java && !java.usingInstances.includes(instanceUuid))
-    java.usingInstances.filter((uuid) => uuid !== instanceUuid);
-};
-
-InstanceSubsystem.on("exit", handleStopInstance);
-InstanceSubsystem.on("failure", handleStopInstance);
 
 export default javaManager;
