@@ -55,7 +55,9 @@ module.exports = {
     extensions: [".ts", ".js"],
     alias: {
       "@languages": path.resolve(__dirname, "../languages"),
-      "mcsmanager-common": path.resolve(__dirname, "../common/src/index.ts")
+      "mcsmanager-common": path.resolve(__dirname, "../common/src/index.ts"),
+      "cpu-features": false,
+      "ssh2": false
     }
   }
 };
