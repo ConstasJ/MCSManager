@@ -1,25 +1,9 @@
-import { exec } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { promisify } from "util";
-
-const execPromise = promisify(exec);
 
 export async function getDirectorySize(dirPath: string): Promise<number> {
-	const platform = process.platform;
-	// Try platform-optimized command first for non-Windows
-	if (platform !== "win32") {
-		try {
-			const command = `du -s --block-size=1 "${dirPath}"`;
-			const { stdout } = await execPromise(command);
-			const size = Number(String(stdout.split(/\s+/)[0]).trim());
-			if (!isNaN(size)) return size;
-		} catch (err) {
-			// fallthrough to recursive
-		}
-	}
-
-	// Fallback: recursive calculation
+	// Use parallel recursive calculation consistently across all platforms
+	// Avoids shell call overhead and ensures predictable performance
 	return await getDirectorySizeRecursive(dirPath);
 }
 
@@ -29,21 +13,46 @@ export async function getDirectorySizeRecursive(
 	let total = 0;
 	try {
 		const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+		
+		// Separate directories and files for parallel processing
+		const subdirs: string[] = [];
+		const files: string[] = [];
+		
 		for (const entry of entries) {
-			const full = path.join(dirPath, entry.name);
+			const fullPath = path.join(dirPath, entry.name);
 			try {
 				if (entry.isDirectory()) {
-					total += await getDirectorySizeRecursive(full);
+					subdirs.push(fullPath);
 				} else if (entry.isFile()) {
-					const st = await fs.promises.stat(full);
-					total += st.size;
+					files.push(fullPath);
 				}
-			} catch (err) {
-				// ignore entry error
+			} catch {
+				// ignore entry stat errors
 				continue;
 			}
 		}
-	} catch (err) {
+		
+		// Process subdirectories in parallel for faster I/O utilization
+		if (subdirs.length > 0) {
+			const subDirPromises = subdirs.map((subdir) =>
+				getDirectorySizeRecursive(subdir).catch(() => 0),
+			);
+			const subDirSizes = await Promise.all(subDirPromises);
+			total += subDirSizes.reduce((a, b) => a + b, 0);
+		}
+		
+		// Stat all files in parallel
+		if (files.length > 0) {
+			const filePromises = files.map((file) =>
+				fs.promises
+					.stat(file)
+					.then((st) => st.size)
+					.catch(() => 0),
+			);
+			const fileSizes = await Promise.all(filePromises);
+			total += fileSizes.reduce((a, b) => a + b, 0);
+		}
+	} catch {
 		return 0;
 	}
 	return total;

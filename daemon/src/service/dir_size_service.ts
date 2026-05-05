@@ -133,9 +133,6 @@ class DirSizeService {
 		return totalSize;
 	}
 
-	/**
-	 * Periodically detect mtime changes and propagate size deltas
-	 */
 	private async detectChanges() {
 		const toUpdate: Array<{ path: string; delta: number }> = [];
 
@@ -147,14 +144,26 @@ class DirSizeService {
 				if (currentMtime !== cached.mtime) {
 					// mtime changed, recalculate this directory
 					const newSize = await getDirectorySize(dirPath);
+
+					// Validate size change to prevent corrupt updates from permission errors
+					if (!this.isValidSizeUpdate(cached.size, newSize)) {
+						// Likely a permission or I/O error, skip this update
+						continue;
+					}
+
 					const delta = newSize - cached.size;
 
 					toUpdate.push({ path: dirPath, delta });
 
-					// Update cache
+					// Update cache with validated size
 					cached.size = newSize;
 					cached.mtime = currentMtime;
 					cached.updatedAt = Date.now();
+					
+					// If this is an instance root (has no parent), rescan for new subdirectories
+					if (!cached.parent) {
+						this.dfsInitialize(dirPath, undefined).catch(() => {});
+					}
 				}
 			} catch {
 				// Directory no longer exists or inaccessible, skip
@@ -165,7 +174,17 @@ class DirSizeService {
 		// Propagate deltas to parent directories
 		for (const { path: dirPath, delta } of toUpdate) {
 			if (delta !== 0) {
-				this.propagateDelta(dirPath, delta);
+				// Validate delta to prevent error propagation
+				// If delta is very large relative to current size, likely an error
+				const cached = this.cache.get(dirPath);
+				if (cached) {
+					const absoluteDelta = Math.abs(delta);
+					// Allow delta up to 2x current size (prevents massive negative deltas from propagating)
+					if (absoluteDelta <= cached.size * 2) {
+						this.propagateDelta(dirPath, delta);
+					}
+					// Otherwise skip - likely a calculation error
+				}
 			}
 		}
 	}
@@ -189,6 +208,28 @@ class DirSizeService {
 	}
 
 	/**
+	 * Validate if size change is reasonable
+	 * Prevents corrupt updates (e.g., permission errors returning 0)
+	 */
+	private isValidSizeUpdate(oldSize: number, newSize: number): boolean {
+		// Allow any change if old size was 0 (initial calculation)
+		if (oldSize === 0) return true;
+
+		// If new size is 0 but old was > 0, likely an error - reject
+		if (newSize === 0 && oldSize > 0) return false;
+
+		// Allow changes within reasonable bounds
+		// Size can increase freely (files added)
+		// Size decrease is allowed up to 50% (reasonable file deletion)
+		if (newSize > oldSize) {
+			return true; // Size increased - always allow
+		} else {
+			const ratio = (oldSize - newSize) / oldSize;
+			return ratio <= 0.5; // Allow up to 50% decrease
+		}
+	}
+
+	/**
 	 * Check if path A is a parent of path B (or they are the same)
 	 */
 	private isAncestorOrSame(parentPath: string, childPath: string): boolean {
@@ -198,6 +239,16 @@ class DirSizeService {
 		// Check if child starts with parent + separator
 		const sep = path.sep;
 		return child.startsWith(parent + sep);
+	}
+
+	/**
+	 * Find parent directory path in cache or infer from filesystem
+	 * Returns the cached parent directory path, or undefined if not found
+	 */
+	private findParentPath(dirPath: string): string | undefined {
+		const parentPath = path.dirname(dirPath);
+		if (parentPath === dirPath) return undefined; // Already at root
+		return this.cache.has(parentPath) ? parentPath : undefined;
 	}
 
 	/**
@@ -274,17 +325,28 @@ class DirSizeService {
 
 	public async forceCalculate(path: string): Promise<number> {
 		const size = await getDirectorySize(path);
+		// Validate size before caching
+		const oldCached = this.cache.get(path);
+		if (oldCached && !this.isValidSizeUpdate(oldCached.size, size)) {
+			// Size change is suspicious, return old cached size instead
+			return oldCached.size;
+		}
 		try {
 			const stat = await fs.promises.stat(path);
+			// Set parent pointer if not already set
+			const parent = oldCached?.parent ?? this.findParentPath(path);
 			this.cache.set(path, {
 				size,
 				mtime: stat.mtime.getTime(),
+				parent,
 				updatedAt: Date.now(),
 			});
 		} catch {
+			const parent = oldCached?.parent ?? this.findParentPath(path);
 			this.cache.set(path, {
 				size,
 				mtime: 0,
+				parent,
 				updatedAt: Date.now(),
 			});
 		}
@@ -309,17 +371,30 @@ class DirSizeService {
 							this.calculating.add(item.path);
 							try {
 								const size = await getDirectorySize(item.path);
+
+								// Validate size change before caching
+								const oldCached = this.cache.get(item.path);
+								if (oldCached && !this.isValidSizeUpdate(oldCached.size, size)) {
+									// Size change is suspicious, likely error - skip update
+									return;
+								}
+
 								try {
 									const stat = await fs.promises.stat(item.path);
+									// Set parent pointer if not already set
+									const parent = oldCached?.parent ?? this.findParentPath(item.path);
 									this.cache.set(item.path, {
 										size,
 										mtime: stat.mtime.getTime(),
+										parent,
 										updatedAt: Date.now(),
 									});
 								} catch {
+									const parent = oldCached?.parent ?? this.findParentPath(item.path);
 									this.cache.set(item.path, {
 										size,
 										mtime: 0,
+										parent,
 										updatedAt: Date.now(),
 									});
 								}
