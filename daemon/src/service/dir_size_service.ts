@@ -16,7 +16,6 @@ class DirSizeService {
 	private cache = new Map<string, ICacheItem>();
 	private checking = false;
 	private concurrent = 6; // Increased from 2 to 6 for faster parallel processing
-	private ttl = 1000 * 60 * 5; // 5 minutes default
 	private task: NodeJS.Timeout;
 	private changeDetectTask: NodeJS.Timeout;
 	private calculating = new Set<string>(); // Track paths being calculated
@@ -193,7 +192,9 @@ class DirSizeService {
 	 * Propagate size change delta up the directory tree
 	 */
 	private propagateDelta(dirPath: string, delta: number) {
-		let current: string | undefined = dirPath;
+		// Current directory has already been updated before propagation.
+		// Only propagate to ancestors to avoid double counting.
+		let current: string | undefined = this.cache.get(dirPath)?.parent;
 
 		while (current) {
 			const cached = this.cache.get(current);
@@ -294,7 +295,6 @@ class DirSizeService {
 	public getCached(path: string): number | undefined {
 		const v = this.cache.get(path);
 		if (!v) return undefined;
-		if (Date.now() - v.updatedAt > this.ttl) return undefined;
 		return v.size;
 	}
 

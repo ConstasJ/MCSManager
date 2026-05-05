@@ -157,7 +157,8 @@ export default class FileManager {
 						size = cached;
 					} else {
 						size = 0; // not ready yet
-						dirSizeService.enqueue(abs);
+						// Warm up cache on read-miss in background
+						dirSizeService.enqueue(abs, true);
 					}
 				}
 
