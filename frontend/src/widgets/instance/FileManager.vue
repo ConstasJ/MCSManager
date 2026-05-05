@@ -125,8 +125,7 @@ const columns = computed(() => {
       title: t("TXT_CODE_94bb113a"),
       dataIndex: "size",
       key: "size",
-      customRender: (e: { text: number }) =>
-        e.text == 0 ? "--" : convertFileSize(e.text.toString()),
+      customRender: (e: { text: number }) => convertFileSize(e.text.toString()),
       minWidth: 200,
       condition: () => !isPhone.value
     },
