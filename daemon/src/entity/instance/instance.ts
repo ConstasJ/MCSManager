@@ -43,7 +43,7 @@ interface IInstanceInfo {
   memoryLimit?: number;
   storageUsage?: number;
   storageLimit?: number;
-  allocatedPorts?: { host: number; container: number; protocol: string }[];
+  allocatedPorts?: { host: string; container: number; protocol: string }[];
 }
 
 interface IWatcherInfo {
