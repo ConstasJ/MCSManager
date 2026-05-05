@@ -10,6 +10,7 @@ import { $t, i18next } from "./i18n";
 import "./service/async_task_service";
 import "./service/async_task_service/quick_install";
 import { checkDependencies } from "./service/dependencies";
+import "./service/dir_size_service";
 import * as koa from "./service/http";
 import logger from "./service/log";
 import * as protocol from "./service/protocol";
@@ -52,11 +53,11 @@ checkDependencies();
 
 // Set language
 if (fs.existsSync(LOCAL_PRESET_LANG_PATH)) {
-  i18next.changeLanguage(fs.readFileSync(LOCAL_PRESET_LANG_PATH, "utf-8"));
+	i18next.changeLanguage(fs.readFileSync(LOCAL_PRESET_LANG_PATH, "utf-8"));
 } else {
-  const lang = config.language || "en_us";
-  logger.info(`LANGUAGE: ${lang}`);
-  i18next.changeLanguage(lang);
+	const lang = config.language || "en_us";
+	logger.info(`LANGUAGE: ${lang}`);
+	i18next.changeLanguage(lang);
 }
 logger.info($t("TXT_CODE_app.welcome"));
 
@@ -65,82 +66,86 @@ const koaApp = koa.initKoa();
 
 // Listen for Koa errors
 koaApp.on("error", (error) => {
-  // Block all Koa framework error
-  // When Koa is attacked by a short connection flood, it is easy for error messages to swipe the screen, which may indirectly affect the operation of some applications
+	// Block all Koa framework error
+	// When Koa is attacked by a short connection flood, it is easy for error messages to swipe the screen, which may indirectly affect the operation of some applications
 });
 
 let httpServer: http.Server | https.Server;
 if (config.ssl) {
-  const options = {
-    cert: fs.readFileSync(path.join(config.sslPemPath)),
-    key: fs.readFileSync(path.join(config.sslKeyPath))
-  };
-  httpServer = https.createServer(options, koaApp.callback());
+	const options = {
+		cert: fs.readFileSync(path.join(config.sslPemPath)),
+		key: fs.readFileSync(path.join(config.sslKeyPath)),
+	};
+	httpServer = https.createServer(options, koaApp.callback());
 } else {
-  httpServer = http.createServer(koaApp.callback());
+	httpServer = http.createServer(koaApp.callback());
 }
 
 httpServer.on("error", (err) => {
-  logger.error($t("TXT_CODE_app.httpSetupError"));
-  logger.error(err);
-  process.exit(1);
+	logger.error($t("TXT_CODE_app.httpSetupError"));
+	logger.error(err);
+	process.exit(1);
 });
 httpServer.listen(config.port, config.ip);
 
 // Initialize Websocket service to HTTP service
 const io = new Server(httpServer, {
-  serveClient: false,
-  pingInterval: 1000 * 20,
-  pingTimeout: 1000 * 10,
-  cookie: false,
-  path: removeTrail(config.prefix, "/") + "/socket.io",
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE"]
-  },
-  maxHttpBufferSize: 1e8
+	serveClient: false,
+	pingInterval: 1000 * 20,
+	pingTimeout: 1000 * 10,
+	cookie: false,
+	path: removeTrail(config.prefix, "/") + "/socket.io",
+	cors: {
+		origin: "*",
+		methods: ["GET", "POST", "PUT", "DELETE"],
+	},
+	maxHttpBufferSize: 1e8,
 });
 
 // Initialize application instance system
 try {
-  InstanceSubsystem.loadInstances();
-  logger.info($t("TXT_CODE_app.instanceLoad", { n: InstanceSubsystem.getInstances().length }));
+	InstanceSubsystem.loadInstances();
+	logger.info(
+		$t("TXT_CODE_app.instanceLoad", {
+			n: InstanceSubsystem.getInstances().length,
+		}),
+	);
 } catch (err) {
-  logger.error($t("TXT_CODE_app.instanceLoadError"), err);
-  process.exit(-1);
+	logger.error($t("TXT_CODE_app.instanceLoadError"), err);
+	process.exit(-1);
 }
 
 (function initCompressModule() {
-  try {
-    fs.chmodSync(GOLANG_ZIP_PATH, 0o755);
-    fs.chmodSync(PTY_PATH, 0o755);
-  } catch (error: any) {
-    logger.error(error?.message);
-    logger.error($t("TXT_CODE_a8b245fa"));
-  }
+	try {
+		fs.chmodSync(GOLANG_ZIP_PATH, 0o755);
+		fs.chmodSync(PTY_PATH, 0o755);
+	} catch (error: any) {
+		logger.error(error?.message);
+		logger.error($t("TXT_CODE_a8b245fa"));
+	}
 })();
 
 // Initialize Websocket server
 io.on("connection", (socket: Socket) => {
-  protocol.addGlobalSocket(socket);
-  router.navigation(socket);
+	protocol.addGlobalSocket(socket);
+	router.navigation(socket);
 
-  socket.on("error", (err) => {
-    logger.error("Connection(): Socket.io Error:", err);
-  });
+	socket.on("error", (err) => {
+		logger.error("Connection(): Socket.io Error:", err);
+	});
 
-  socket.on("disconnect", () => {
-    protocol.delGlobalSocket(socket);
-    for (const name of socket.eventNames()) socket.removeAllListeners(name);
-  });
+	socket.on("disconnect", () => {
+		protocol.delGlobalSocket(socket);
+		for (const name of socket.eventNames()) socket.removeAllListeners(name);
+	});
 });
 
 process.on("uncaughtException", function (err) {
-  logger.error(`Error: UncaughtException:`, err);
+	logger.error(`Error: UncaughtException:`, err);
 });
 
 process.on("unhandledRejection", (reason, p) => {
-  logger.error(`Error: UnhandledRejection:`, reason, p);
+	logger.error(`Error: UnhandledRejection:`, reason, p);
 });
 
 logger.info("----------------------------");
@@ -158,53 +163,58 @@ console.log("");
 
 let isExiting = false;
 async function listenExitSig(signal: string, isForce = true) {
-  if (isExiting && !isForce) {
-    logger.warn($t("TXT_CODE_6f862823"));
-    return;
-  }
+	if (isExiting && !isForce) {
+		logger.warn($t("TXT_CODE_6f862823"));
+		return;
+	}
 
-  try {
-    if (isExiting) {
-      // User interrupted the process, now force exit
-      logger.warn($t("TXT_CODE_4ffdc91d", { signal }));
-      logger.info($t("TXT_CODE_app.forcedShutdown"));
-      await InstanceSubsystem.exit(true); // Force close all instances
-      await uploadManager.exit();
-      logger.info($t("TXT_CODE_dff680b7"));
-      process.exit(0);
-    } else {
-      logger.warn($t("TXT_CODE_4ffdc91d", { signal }));
-      isExiting = true;
+	try {
+		if (isExiting) {
+			// User interrupted the process, now force exit
+			logger.warn($t("TXT_CODE_4ffdc91d", { signal }));
+			logger.info($t("TXT_CODE_app.forcedShutdown"));
+			await InstanceSubsystem.exit(true); // Force close all instances
+			await uploadManager.exit();
+			logger.info($t("TXT_CODE_dff680b7"));
+			process.exit(0);
+		} else {
+			logger.warn($t("TXT_CODE_4ffdc91d", { signal }));
+			isExiting = true;
 
-      if (isForce || !config.enableSoftShutdown) {
-        // Force mode
-        await InstanceSubsystem.exit(true);
-      } else {
-        // Soft shutdown with configurable strategy
-        await InstanceSubsystem.softExit(
-          Boolean(config.softShutdownSkipDocker),
-          Number(config.softShutdownWaitSeconds) || 10
-        );
-      }
+			if (isForce || !config.enableSoftShutdown) {
+				// Force mode
+				await InstanceSubsystem.exit(true);
+			} else {
+				// Soft shutdown with configurable strategy
+				await InstanceSubsystem.softExit(
+					Boolean(config.softShutdownSkipDocker),
+					Number(config.softShutdownWaitSeconds) || 10,
+				);
+			}
 
-      await uploadManager.exit();
-      logger.info($t("TXT_CODE_dff680b7"));
-      process.exit(0);
-    }
-  } catch (err) {
-    logger.error(err);
-    process.exit(-1);
-  }
+			await uploadManager.exit();
+			logger.info($t("TXT_CODE_dff680b7"));
+			process.exit(0);
+		}
+	} catch (err) {
+		logger.error(err);
+		process.exit(-1);
+	}
 }
 
 // Listen for close process signals
 ["SIGTERM", "SIGINT", "SIGQUIT"].forEach(function (sig) {
-  process.on(sig, async () => {
-    await listenExitSig(sig, false); // Use soft exit by default
-  });
+	process.on(sig, async () => {
+		await listenExitSig(sig, false); // Use soft exit by default
+	});
 });
 
 process.stdin.on("data", (v) => {
-  const command = v.toString().replace("\n", "").replace("\r", "").trim().toLowerCase();
-  if (command === "exit") listenExitSig("exit", false); // Use soft exit
+	const command = v
+		.toString()
+		.replace("\n", "")
+		.replace("\r", "")
+		.trim()
+		.toLowerCase();
+	if (command === "exit") listenExitSig("exit", false); // Use soft exit
 });
